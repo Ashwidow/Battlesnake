@@ -8,8 +8,8 @@ def info() -> typing.Dict:
         "apiversion": "1",
         "author": "PythonicFury",
         "color": "#0061ff",
-        "head": "evil",
-        "tail": "round-bum",
+        "head": "bonhomme",
+        "tail": "mlh-gene",
     }
 
 def start(game_state: typing.Dict):
