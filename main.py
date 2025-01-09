@@ -156,7 +156,7 @@ def move(game_state: typing.Dict) -> typing.Dict:
 
 #Begin Server Pull
 if __name__ == "__main__":
-    from Battlesnake.server import run_server
+    from server import run_server
 
     run_server({
         "info": info, 
