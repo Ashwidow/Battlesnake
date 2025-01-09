@@ -6,7 +6,7 @@ def info() -> typing.Dict:
 
     return {
         "apiversion": "1",
-        "author": "TheMuffinSnake",
+        "author": "PythonicFury",
         "color": "#0061ff",
         "head": "evil",
         "tail": "round-bum",
