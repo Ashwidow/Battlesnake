@@ -3,9 +3,9 @@ import os
 import typing
 from flask import Flask, request, jsonify
 
-def run_server(handlers: typing.Dict):
-    app = Flask("Battlesnake")
+app = Flask("Battlesnake")
 
+def run_server(handlers: typing.Dict):
     @app.get("/")
     def on_info():
         try:
@@ -48,13 +48,13 @@ def run_server(handlers: typing.Dict):
         response.headers.set("server", "battlesnake/azure/app-service-python")
         return response
 
-    #Using Azure defaults
+    # Using Azure defaults
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "8000"))
 
     logging.basicConfig(level=logging.INFO)
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
-    #Start the server
+    # Start the server
     logging.info(f"Running Battlesnake server at http://{host}:{port}")
     app.run(host=host, port=port, debug=os.environ.get("DEBUG", "false").lower() == "true")
