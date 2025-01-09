@@ -48,13 +48,11 @@ def run_server(handlers: typing.Dict):
         response.headers.set("server", "battlesnake/azure/app-service-python")
         return response
 
-    # Using Azure defaults
-    host = os.environ.get("HOST", "0.0.0.0")
-    port = int(os.environ.get("PORT", "8000"))
+from main import info, start, move, end
 
-    logging.basicConfig(level=logging.INFO)
-    logging.getLogger("werkzeug").setLevel(logging.ERROR)
-
-    # Start the server
-    logging.info(f"Running Battlesnake server at http://{host}:{port}")
-    app.run(host=host, port=port, debug=os.environ.get("DEBUG", "false").lower() == "true")
+run_server({
+    "info": info,
+    "start": start,
+    "move": move,
+    "end": end,
+})
