@@ -345,6 +345,14 @@ def move(game_state: typing.Dict) -> typing.Dict:
       "right": True
     }
 
+    # Track risky moves separately (potential head-to-head with equal/longer snakes)
+    is_move_risky = {
+      "up": False,
+      "down": False,
+      "left": False,
+      "right": False
+    }
+
     head = game_state["you"]["body"][0]
     board_width = game_state['board']['width']
     board_height = game_state['board']['height']
@@ -431,35 +439,44 @@ def move(game_state: typing.Dict) -> typing.Dict:
             possible_opponent_moves.append({"x": opponent_head["x"], "y": opponent_head["y"] - 1})
 
         for opp_move in possible_opponent_moves:
-            # Avoid head-to-head with equal or longer snakes (both die on equal length collision)
+            # Mark head-to-head with equal or longer snakes as risky (not definitely unsafe)
             if opponent_length >= my_length:
                 if opp_move["x"] == head["x"] + 1 and opp_move["y"] == head["y"]:
-                    is_move_safe["right"] = False
+                    is_move_risky["right"] = True
                 if opp_move["x"] == head["x"] - 1 and opp_move["y"] == head["y"]:
-                    is_move_safe["left"] = False
+                    is_move_risky["left"] = True
                 if opp_move["x"] == head["x"] and opp_move["y"] == head["y"] + 1:
-                    is_move_safe["up"] = False
+                    is_move_risky["up"] = True
                 if opp_move["x"] == head["x"] and opp_move["y"] == head["y"] - 1:
-                    is_move_safe["down"] = False
+                    is_move_risky["down"] = True
 
-    #Score each safe move
+    #Score each move
     move_scores = {}
     for direction in ["up", "down", "left", "right"]:
         move_scores[direction] = calculate_move_score(game_state, direction, is_move_safe)
 
-    # Filter to only actually safe moves
-    safe_moves_with_scores = {direction: score for direction, score in move_scores.items()
-                              if is_move_safe[direction]}
+    # Filter to definitely safe moves (not risky, not unsafe)
+    safe_moves = {direction: score for direction, score in move_scores.items()
+                  if is_move_safe[direction] and not is_move_risky[direction]}
 
-    # Find the best move from safe moves
-    if safe_moves_with_scores:
-        best_move = max(safe_moves_with_scores, key=safe_moves_with_scores.get)
-        best_score = safe_moves_with_scores[best_move]
+    # Filter to risky but not definitely unsafe moves
+    risky_moves = {direction: score for direction, score in move_scores.items()
+                   if is_move_safe[direction] and is_move_risky[direction]}
+
+    # Prefer safe moves, but take risky moves over dying
+    if safe_moves:
+        best_move = max(safe_moves, key=safe_moves.get)
+        best_score = safe_moves[best_move]
         print(f"MOVE {game_state['turn']}: {best_move} (score: {best_score:.1f})")
+    elif risky_moves:
+        # No safe moves, but we have risky options - take the best one
+        best_move = max(risky_moves, key=risky_moves.get)
+        best_score = risky_moves[best_move]
+        print(f"MOVE {game_state['turn']}: RISKY {best_move} - no safe moves! (score: {best_score:.1f})")
     else:
-        # No safe moves - pick the least bad option
+        # No safe or risky moves - pick the least bad option (probably going to die)
         best_move = max(move_scores, key=move_scores.get)
         best_score = move_scores[best_move]
-        print(f"MOVE {game_state['turn']}: No safe moves! Attempting {best_move} (score: {best_score:.1f})")
+        print(f"MOVE {game_state['turn']}: DESPERATION {best_move}! (score: {best_score:.1f})")
 
     return {"move": best_move}
