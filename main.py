@@ -131,14 +131,23 @@ def lookahead_survival(game_state: typing.Dict, direction: str, depth: int = 3) 
     # Simulate our move
     next_pos = get_next_position(head, direction)
 
-    # Create occupied spaces for next turn
+    # Create occupied spaces for next turn INCLUDING OUR OWN BODY
     occupied = set()
-    for snake in game_state['board']['snakes']:
-        for segment in snake['body'][:-1]:  # Tails will move
-            occupied.add((segment['x'], segment['y']))
 
-    # Add our new position
-    occupied.add((next_pos['x'], next_pos['y']))
+    # Add all snakes' bodies (excluding tails that will move)
+    for snake in game_state['board']['snakes']:
+        if snake['id'] == game_state['you']['id']:
+            new_body = simulate_snake_move(game_state["you"]["body"], direction)
+            for segment in new_body[:-1]:  # Exclude tail
+                occupied.add((segment['x'], segment['y']))
+        else:
+            for segment in snake['body'][:-1]:
+                occupied.add((segment['x'], segment['y']))
+
+    # Add hazards if they exist
+    if 'hazards' in game_state['board']:
+        for hazard in game_state['board']['hazards']:
+            occupied.add((hazard['x'], hazard['y']))
 
     # Check immediate space availability
     immediate_space = flood_fill(next_pos, board_width, board_height, occupied)
