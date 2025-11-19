@@ -115,7 +115,7 @@ def calculate_move_score(game_state: typing.Dict, direction: str, is_move_safe: 
     if my_health > 50 and tail_distance < 3:
         score += 20
 
-    # Avoid stronger opponents
+    # Aggressive opponent handling
     for snake in game_state['board']['snakes']:
         if snake['id'] == game_state['you']['id']:
             continue
@@ -124,10 +124,15 @@ def calculate_move_score(game_state: typing.Dict, direction: str, is_move_safe: 
         opponent_length = len(snake['body'])
         distance_to_opponent = manhattan_distance(next_pos, opponent_head)
 
-        if opponent_length >= my_length and distance_to_opponent <= 2:
-            score -= 100  # Avoid stronger snakes
-        elif opponent_length < my_length and distance_to_opponent <= 3:
-            score += 30  # Hunt weaker snakes
+        # Only avoid if opponent is STRICTLY longer
+        if opponent_length > my_length and distance_to_opponent <= 2:
+            score -= 150  # Avoid strictly stronger snakes
+        # Be aggressive when we're longer or equal
+        elif opponent_length <= my_length and distance_to_opponent <= 3:
+            score += 80  # Hunt equal or weaker snakes aggressively
+            # Extra aggressive when we're longer
+            if opponent_length < my_length:
+                score += 50
 
     # Avoid edges slightly
     if next_pos['x'] == 0 or next_pos['x'] == board_width - 1:
@@ -221,8 +226,8 @@ def move(game_state: typing.Dict) -> typing.Dict:
             possible_opponent_moves.append({"x": opponent_head["x"], "y": opponent_head["y"] - 1})
 
         for opp_move in possible_opponent_moves:
-            # Avoid if we're equal or smaller (opponent wins ties)
-            if opponent_length >= my_length:
+            # Only avoid if opponent is STRICTLY longer (we win ties and longer matchups)
+            if opponent_length > my_length:
                 if opp_move["x"] == head["x"] + 1 and opp_move["y"] == head["y"]:
                     is_move_safe["right"] = False
                 if opp_move["x"] == head["x"] - 1 and opp_move["y"] == head["y"]:
