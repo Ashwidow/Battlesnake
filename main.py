@@ -1,9 +1,10 @@
 import random
 import typing
+from collections import deque
+
 
 def info() -> typing.Dict:
     print("FIGHT")
-
     return {
         "apiversion": "1",
         "author": "PythonicFury",
@@ -12,155 +13,84 @@ def info() -> typing.Dict:
         "tail": "mlh-gene",
     }
 
+
 def start(game_state: typing.Dict):
     print("GAME START")
+
+
 def end(game_state: typing.Dict):
     print("GAME OVER")
 
+
+# Flood fill algorithm to compute the size of open space from a point
+
+def flood_fill(start, blocked, width, height):
+    """Compute the size of the area reachable from start avoiding blocked cells."""
+    visited = set()
+    queue = deque([start])
+    visited.add(start)
+    while queue:
+        x, y = queue.popleft()
+        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < width and 0 <= ny < height and (nx, ny) not in blocked and (nx, ny) not in visited:
+                visited.add((nx, ny))
+                queue.append((nx, ny))
+    return len(visited)
+
+
 def move(game_state: typing.Dict) -> typing.Dict:
-
-    is_move_safe = {
-      "up": True, 
-      "down": True, 
-      "left": True, 
-      "right": True
-    }
-
-    head = game_state["you"]["body"][0]
-    neck = game_state["you"]["body"][1]
-
-    #Prevent Snake from running into itself
-    if neck["x"] < head["x"]:  #Neck is left of head, don't move left
-        is_move_safe["left"] = False
-    elif neck["x"] > head["x"]:  #Neck is right of head, don't move right
-        is_move_safe["right"] = False
-    elif neck["y"] < head["y"]:  #Neck is below head, don't move down
-        is_move_safe["down"] = False
-    elif neck["y"] > head["y"]:  #Neck is above head, don't move up
-        is_move_safe["up"] = False
-
-    #Prevent snake from moving out of bounds
+    """Choose a move based on avoiding collisions and maximizing open space, prioritizing food."""
+    import math
     board_width = game_state['board']['width']
     board_height = game_state['board']['height']
+    head = game_state['you']['body'][0]
 
-    if head["x"] == 0:
-      is_move_safe["left"] = False #Head too close to left wall
-    if head["y"] == 0:
-      is_move_safe["down"] = False #Head too close to bottom wall
-    if head["x"] == board_width - 1:
-      is_move_safe["right"] = False #Head too close to right wall
-    if head["y"] == board_height - 1:
-      is_move_safe["up"] = False #Head too close to top wall
-
-    #Prevent snake from colliding with anything
-    for everything in game_state['board']['snakes']:
-        avoidarea = everything["body"]
-        for avoid in avoidarea:
-          if (avoid["x"] == head["x"] + 1) and (avoid["y"] == head["y"]):
-              is_move_safe["right"] = False 
-          if (avoid["x"] == head["x"] - 1) and (avoid["y"] == head["y"]):
-              is_move_safe["left"] = False   
-          if (avoid["x"] == head["x"]) and (avoid["y"] == head["y"] + 1):
-              is_move_safe["up"] = False  
-          if (avoid["x"] == head["x"]) and (avoid["y"] == head["y"] - 1):
-              is_move_safe["down"] = False
-
-    #Avoid head-to-head collisions
+    # Build a set of blocked positions (snake bodies)
+    blocked = set()
     for snake in game_state['board']['snakes']:
-        if snake['id'] == game_state['you']['id']:
+        for segment in snake['body']:
+            blocked.add((segment['x'], segment['y']))
+
+    directions = {
+        'up': (0, 1),
+        'down': (0, -1),
+        'left': (-1, 0),
+        'right': (1, 0)
+    }
+
+    safe_options = []
+    for direction, (dx, dy) in directions.items():
+        new_x = head['x'] + dx
+        new_y = head['y'] + dy
+        # Check board boundaries
+        if new_x < 0 or new_x >= board_width or new_y < 0 or new_y >= board_height:
             continue
-
-        opponent_head = snake['body'][0]
-        opponent_length = len(snake['body'])
-        my_length = len(game_state['you']['body'])
-
-        #Predict where opponent heads might move
-        possible_moves = [
-            {"x": opponent_head["x"] + 1, "y": opponent_head["y"]},
-            {"x": opponent_head["x"] - 1, "y": opponent_head["y"]},
-            {"x": opponent_head["x"], "y": opponent_head["y"] + 1},
-            {"x": opponent_head["x"], "y": opponent_head["y"] - 1}
-        ]
-
-        for move in possible_moves:
-            if move["x"] == head["x"] + 1 and move["y"] == head["y"] and opponent_length >= my_length:
-                is_move_safe["right"] = False
-            if move["x"] == head["x"] - 1 and move["y"] == head["y"] and opponent_length >= my_length:
-                is_move_safe["left"] = False
-            if move["x"] == head["x"] and move["y"] == head["y"] + 1 and opponent_length >= my_length:
-                is_move_safe["up"] = False
-            if move["x"] == head["x"] and move["y"] == head["y"] - 1 and opponent_length >= my_length:
-                is_move_safe["down"] = False
-
-    #Chase weaker opponents
-    my_length = len(game_state['you']['body'])
-    weakest_snake = None
-    min_distance_to_snake = float('inf')
-
-    for snake in game_state['board']['snakes']:
-        if snake['id'] == game_state['you']['id']:
+        # Check collisions
+        if (new_x, new_y) in blocked:
             continue
+        area = flood_fill((new_x, new_y), blocked, board_width, board_height)
+        # Distance to nearest food
+        min_food_distance = math.inf
+        for food in game_state['board']['food']:
+            dist = abs(food['x'] - new_x) + abs(food['y'] - new_y)
+            if dist < min_food_distance:
+                min_food_distance = dist
+        safe_options.append((direction, area, min_food_distance))
 
-        if len(snake['body']) < my_length:
-            opponent_head = snake['body'][0]
-            distance = abs(head['x'] - opponent_head['x']) + abs(head['y'] - opponent_head['y'])
+    if not safe_options:
+        return {'move': 'up'}
 
-            if distance < min_distance_to_snake:
-                min_distance_to_snake = distance
-                weakest_snake = opponent_head
-
-    #Find the nearest food
-    food = game_state['board']['food']
-    nearest_food = None
-    min_distance_to_food = float('inf')
-
-    for f in food:
-        distance = abs(head['x'] - f['x']) + abs(head['y'] - f['y'])
-        if distance < min_distance_to_food:
-            min_distance_to_food = distance
-            nearest_food = f
-
-    #Decide between chasing food or weaker snake
-    target = None
-    if game_state['you']['health'] < 50 or (nearest_food and min_distance_to_food < min_distance_to_snake):
-        target = nearest_food
-    elif weakest_snake:
-        target = weakest_snake
-
-    if target:
-        if target['x'] < head['x'] and is_move_safe['left']:
-            return {"move": "left"}
-        if target['x'] > head['x'] and is_move_safe['right']:
-            return {"move": "right"}
-        if target['y'] < head['y'] and is_move_safe['down']:
-            return {"move": "down"}
-        if target['y'] > head['y'] and is_move_safe['up']:
-            return {"move": "up"}
-
-    #Are there any safe moves left?
-    safe_moves = []
-    for move, isSafe in is_move_safe.items():
-        if isSafe:
-            safe_moves.append(move)
-
-    if len(safe_moves) == 0:
-        print(f"MOVE {game_state['turn']}: No safe moves detected! Moving down")
-        return {"move": "down"}
-
-    #Choose a random move from the safe ones
-    next_move = random.choice(safe_moves)
-
-    print(f"MOVE {game_state['turn']}: {next_move}")
-    return {"move": next_move}
+    safe_options.sort(key=lambda x: (-x[1], x[2]))
+    best_direction = safe_options[0][0]
+    return {'move': best_direction}
 
 
-#Begin Server Pull
 if __name__ == "__main__":
     from server import run_server
-
     run_server({
-        "info": info, 
-        "start": start, 
-         "move": move, 
-        "end": end
+        "info": info,
+        "start": start,
+        "move": move,
+        "end": end,
     })
