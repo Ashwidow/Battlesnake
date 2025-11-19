@@ -131,6 +131,12 @@ def lookahead_survival(game_state: typing.Dict, direction: str, depth: int = 3) 
     # Simulate our move
     next_pos = get_next_position(head, direction)
 
+    # Check if move is out of bounds
+    if next_pos["x"] < 0 or next_pos["x"] >= board_width:
+        return (False, 0, -1000)
+    if next_pos["y"] < 0 or next_pos["y"] >= board_height:
+        return (False, 0, -1000)
+
     # Create occupied spaces for next turn INCLUDING OUR OWN BODY
     occupied = set()
 
@@ -173,6 +179,7 @@ def lookahead_survival(game_state: typing.Dict, direction: str, depth: int = 3) 
         # Create a simulated game state
         sim_game_state = {
             "you": {
+                "id": game_state["you"]["id"],
                 "body": simulate_snake_move(game_state["you"]["body"], direction),
                 "health": game_state["you"]["health"] - 1
             },
@@ -431,15 +438,3 @@ def move(game_state: typing.Dict) -> typing.Dict:
         print(f"MOVE {game_state['turn']}: {best_move} (score: {best_score:.1f})")
 
     return {"move": best_move}
-
-
-#Begin Server Pull
-if __name__ == "__main__":
-    from server import run_server
-
-    run_server({
-        "info": info,
-        "start": start,
-         "move": move,
-        "end": end
-    })
