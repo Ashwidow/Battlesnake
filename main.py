@@ -73,6 +73,156 @@ def get_next_position(head: typing.Dict, direction: str) -> typing.Dict:
         return {"x": head["x"] + 1, "y": head["y"]}
     return head
 
+def simulate_snake_move(snake_body: list, direction: str, ate_food: bool = False) -> list:
+    """Simulate a snake moving in a direction"""
+    head = snake_body[0].copy()
+
+    if direction == "up":
+        new_head = {"x": head["x"], "y": head["y"] + 1}
+    elif direction == "down":
+        new_head = {"x": head["x"], "y": head["y"] - 1}
+    elif direction == "left":
+        new_head = {"x": head["x"] - 1, "y": head["y"]}
+    elif direction == "right":
+        new_head = {"x": head["x"] + 1, "y": head["y"]}
+    else:
+        return snake_body
+
+    new_body = [new_head] + snake_body[:-1] if not ate_food else [new_head] + snake_body
+    return new_body
+
+def get_valid_moves(head: typing.Dict, board_width: int, board_height: int, occupied: set, neck: typing.Dict = None) -> list:
+    """Get all valid moves from a position"""
+    valid = []
+
+    for direction in ["up", "down", "left", "right"]:
+        next_pos = get_next_position(head, direction)
+
+        # Check bounds
+        if next_pos["x"] < 0 or next_pos["x"] >= board_width:
+            continue
+        if next_pos["y"] < 0 or next_pos["y"] >= board_height:
+            continue
+
+        # Check if position is occupied
+        if (next_pos["x"], next_pos["y"]) in occupied:
+            continue
+
+        # Check neck constraint
+        if neck and next_pos["x"] == neck["x"] and next_pos["y"] == neck["y"]:
+            continue
+
+        valid.append(direction)
+
+    return valid
+
+def lookahead_survival(game_state: typing.Dict, direction: str, depth: int = 3) -> tuple:
+    """
+    Look ahead multiple moves to check if we can survive
+    Returns (can_survive, min_space_found, trap_score)
+    """
+    if depth == 0:
+        return (True, 100, 0)
+
+    head = game_state["you"]["body"][0]
+    board_width = game_state['board']['width']
+    board_height = game_state['board']['height']
+
+    # Simulate our move
+    next_pos = get_next_position(head, direction)
+
+    # Create occupied spaces for next turn
+    occupied = set()
+    for snake in game_state['board']['snakes']:
+        for segment in snake['body'][:-1]:  # Tails will move
+            occupied.add((segment['x'], segment['y']))
+
+    # Add our new position
+    occupied.add((next_pos['x'], next_pos['y']))
+
+    # Check immediate space availability
+    immediate_space = flood_fill(next_pos, board_width, board_height, occupied)
+
+    # If we're in a very tight space, flag it
+    if immediate_space < len(game_state["you"]["body"]) + 2:
+        return (False, immediate_space, -500)
+
+    # Look ahead at possible next moves
+    valid_next_moves = get_valid_moves(next_pos, board_width, board_height, occupied)
+
+    if len(valid_next_moves) == 0:
+        return (False, 0, -1000)
+
+    if depth == 1:
+        return (True, immediate_space, 0)
+
+    # Recursively check next moves
+    min_space = immediate_space
+    worst_trap_score = 0
+
+    for next_dir in valid_next_moves:
+        # Create a simulated game state
+        sim_game_state = {
+            "you": {
+                "body": simulate_snake_move(game_state["you"]["body"], direction),
+                "health": game_state["you"]["health"] - 1
+            },
+            "board": game_state["board"]
+        }
+
+        can_survive, space, trap_score = lookahead_survival(sim_game_state, next_dir, depth - 1)
+
+        if not can_survive:
+            return (False, space, trap_score - 200)
+
+        min_space = min(min_space, space)
+        worst_trap_score = min(worst_trap_score, trap_score)
+
+    return (True, min_space, worst_trap_score)
+
+def check_cutoff_opportunity(game_state: typing.Dict, direction: str) -> float:
+    """
+    Check if a move can cut off an opponent's escape routes
+    Returns a score bonus for aggressive positioning
+    """
+    head = game_state["you"]["body"][0]
+    my_length = len(game_state["you"]["body"])
+    next_pos = get_next_position(head, direction)
+    board_width = game_state['board']['width']
+    board_height = game_state['board']['height']
+
+    cutoff_score = 0
+
+    for snake in game_state['board']['snakes']:
+        if snake['id'] == game_state['you']['id']:
+            continue
+
+        opponent_head = snake['body'][0]
+        opponent_length = len(snake['body'])
+
+        # Only try to cut off weaker or equal snakes
+        if opponent_length > my_length:
+            continue
+
+        # Check if we're near the opponent
+        distance = manhattan_distance(next_pos, opponent_head)
+        if distance > 4:
+            continue
+
+        # Simulate opponent's available space after our move
+        occupied = get_occupied_spaces(game_state)
+        occupied.add((next_pos['x'], next_pos['y']))
+
+        opponent_space = flood_fill(opponent_head, board_width, board_height, occupied)
+
+        # If opponent has limited space, we're cutting them off
+        if opponent_space < opponent_length + 3:
+            cutoff_score += 100  # Good cutoff positioning
+            if opponent_space < opponent_length:
+                cutoff_score += 200  # Deadly trap!
+
+    return cutoff_score
+
 def calculate_move_score(game_state: typing.Dict, direction: str, is_move_safe: typing.Dict) -> float:
     """Calculate a score for a potential move"""
     if not is_move_safe[direction]:
@@ -89,9 +239,21 @@ def calculate_move_score(game_state: typing.Dict, direction: str, is_move_safe: 
 
     score = 0
 
+    # LOOKAHEAD: Check if this move leads to a trap
+    can_survive, min_future_space, trap_score = lookahead_survival(game_state, direction, depth=3)
+    if not can_survive:
+        return -900000  # This leads to a trap!
+
+    score += trap_score  # Add trap penalty/bonus
+    score += min_future_space * 5  # Reward moves that maintain space
+
     # Flood fill - favor moves with more space
     space_available = flood_fill(next_pos, board_width, board_height, occupied)
     score += space_available * 10
+
+    # AGGRESSIVE: Check for cutoff opportunities
+    cutoff_bonus = check_cutoff_opportunity(game_state, direction)
+    score += cutoff_bonus
 
     # Prefer center of board (more options)
     center_x, center_y = board_width // 2, board_height // 2
