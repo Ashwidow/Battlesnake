@@ -21,8 +21,9 @@ def end(game_state: typing.Dict):
 def flood_fill(start_pos: typing.Dict, board_width: int, board_height: int, occupied_spaces: set) -> int:
     """Calculate available space from a position using flood fill"""
     visited = set()
-    queue = deque([tuple(start_pos.values())])
-    visited.add(tuple(start_pos.values()))
+    start_tuple = (start_pos['x'], start_pos['y'])
+    queue = deque([start_tuple])
+    visited.add(start_tuple)
 
     while queue:
         x, y = queue.popleft()
@@ -42,12 +43,21 @@ def flood_fill(start_pos: typing.Dict, board_width: int, board_height: int, occu
 
     return len(visited)
 
-def get_occupied_spaces(game_state: typing.Dict) -> set:
+def get_occupied_spaces(game_state: typing.Dict, exclude_tail_if_safe: bool = False) -> set:
     """Get all occupied spaces on the board"""
     occupied = set()
+    food_positions = {(f['x'], f['y']) for f in game_state['board']['food']} if 'food' in game_state['board'] else set()
 
     for snake in game_state['board']['snakes']:
-        for segment in snake['body'][:-1]:  # Exclude tail as it will move
+        # Add body segments
+        for i, segment in enumerate(snake['body']):
+            is_tail = (i == len(snake['body']) - 1)
+            tail_pos = (segment['x'], segment['y'])
+
+            # Only exclude tail if it will definitely move (not on food)
+            if exclude_tail_if_safe and is_tail and tail_pos not in food_positions:
+                continue
+
             occupied.add((segment['x'], segment['y']))
 
     # Add hazards if they exist
@@ -137,17 +147,20 @@ def lookahead_survival(game_state: typing.Dict, direction: str, depth: int = 3) 
     if next_pos["y"] < 0 or next_pos["y"] >= board_height:
         return (False, 0, -1000)
 
-    # Create occupied spaces for next turn INCLUDING OUR OWN BODY
+    # Create occupied spaces for next turn
     occupied = set()
 
-    # Add all snakes' bodies (excluding tails that will move)
+    # Add all snakes' bodies (including tails - they stay if snake eats)
     for snake in game_state['board']['snakes']:
         if snake['id'] == game_state['you']['id']:
             new_body = simulate_snake_move(game_state["you"]["body"], direction)
-            for segment in new_body[:-1]:  # Exclude tail
-                occupied.add((segment['x'], segment['y']))
+            # Add our body but NOT the head position (since we're checking space FROM there)
+            for i, segment in enumerate(new_body):
+                if i > 0:  # Skip head (index 0)
+                    occupied.add((segment['x'], segment['y']))
         else:
-            for segment in snake['body'][:-1]:
+            # Include enemy tails - they might eat and not move tail
+            for segment in snake['body']:
                 occupied.add((segment['x'], segment['y']))
 
     # Add hazards if they exist
@@ -159,7 +172,9 @@ def lookahead_survival(game_state: typing.Dict, direction: str, depth: int = 3) 
     immediate_space = flood_fill(next_pos, board_width, board_height, occupied)
 
     # If we're in a very tight space, flag it
-    if immediate_space < len(game_state["you"]["body"]) + 2:
+    # Need space for at least our body length (won't shrink unless we starve)
+    required_space = len(game_state["you"]["body"])
+    if immediate_space < required_space:
         return (False, immediate_space, -500)
 
     # Look ahead at possible next moves
@@ -175,12 +190,16 @@ def lookahead_survival(game_state: typing.Dict, direction: str, depth: int = 3) 
     min_space = immediate_space
     worst_trap_score = 0
 
+    # Get the body state after making the move 'direction'
+    new_body_after_move = simulate_snake_move(game_state["you"]["body"], direction)
+
     for next_dir in valid_next_moves:
-        # Create a simulated game state
+        # Create a simulated game state for the NEXT move
+        # The body is already updated from moving in 'direction'
         sim_game_state = {
             "you": {
                 "id": game_state["you"]["id"],
-                "body": simulate_snake_move(game_state["you"]["body"], direction),
+                "body": new_body_after_move,
                 "health": game_state["you"]["health"] - 1
             },
             "board": game_state["board"]
@@ -216,8 +235,8 @@ def check_cutoff_opportunity(game_state: typing.Dict, direction: str) -> float:
         opponent_head = snake['body'][0]
         opponent_length = len(snake['body'])
 
-        # Only try to cut off weaker or equal snakes
-        if opponent_length > my_length:
+        # Only try to cut off strictly weaker snakes (avoid equal length confrontations)
+        if opponent_length >= my_length:
             continue
 
         # Check if we're near the opponent
@@ -251,7 +270,6 @@ def calculate_move_score(game_state: typing.Dict, direction: str, is_move_safe: 
     my_length = len(game_state['you']['body'])
 
     next_pos = get_next_position(head, direction)
-    occupied = get_occupied_spaces(game_state)
 
     score = 0
 
@@ -263,7 +281,8 @@ def calculate_move_score(game_state: typing.Dict, direction: str, is_move_safe: 
     score += trap_score  # Add trap penalty/bonus
     score += min_future_space * 5  # Reward moves that maintain space
 
-    # Flood fill - favor moves with more space
+    # Flood fill - favor moves with more space (exclude safe tails for optimistic view)
+    occupied = get_occupied_spaces(game_state, exclude_tail_if_safe=True)
     space_available = flood_fill(next_pos, board_width, board_height, occupied)
     score += space_available * 10
 
@@ -302,15 +321,12 @@ def calculate_move_score(game_state: typing.Dict, direction: str, is_move_safe: 
         opponent_length = len(snake['body'])
         distance_to_opponent = manhattan_distance(next_pos, opponent_head)
 
-        # Only avoid if opponent is STRICTLY longer
-        if opponent_length > my_length and distance_to_opponent <= 2:
-            score -= 150  # Avoid strictly stronger snakes
-        # Be aggressive when we're longer or equal
-        elif opponent_length <= my_length and distance_to_opponent <= 3:
-            score += 80  # Hunt equal or weaker snakes aggressively
-            # Extra aggressive when we're longer
-            if opponent_length < my_length:
-                score += 50
+        # Avoid equal or longer snakes (head-to-head collision kills both equal snakes)
+        if opponent_length >= my_length and distance_to_opponent <= 2:
+            score -= 150  # Avoid equal or stronger snakes
+        # Be aggressive only when we're strictly longer
+        elif opponent_length < my_length and distance_to_opponent <= 3:
+            score += 130  # Hunt weaker snakes aggressively
 
     # Avoid edges slightly
     if next_pos['x'] == 0 or next_pos['x'] == board_width - 1:
@@ -330,20 +346,21 @@ def move(game_state: typing.Dict) -> typing.Dict:
     }
 
     head = game_state["you"]["body"][0]
-    neck = game_state["you"]["body"][1]
     board_width = game_state['board']['width']
     board_height = game_state['board']['height']
     my_length = len(game_state['you']['body'])
 
     #Prevent Snake from running into itself
-    if neck["x"] < head["x"]:  #Neck is left of head, don't move left
-        is_move_safe["left"] = False
-    elif neck["x"] > head["x"]:  #Neck is right of head, don't move right
-        is_move_safe["right"] = False
-    elif neck["y"] < head["y"]:  #Neck is below head, don't move down
-        is_move_safe["down"] = False
-    elif neck["y"] > head["y"]:  #Neck is above head, don't move up
-        is_move_safe["up"] = False
+    if my_length > 1:
+        neck = game_state["you"]["body"][1]
+        if neck["x"] < head["x"]:  #Neck is left of head, don't move left
+            is_move_safe["left"] = False
+        elif neck["x"] > head["x"]:  #Neck is right of head, don't move right
+            is_move_safe["right"] = False
+        elif neck["y"] < head["y"]:  #Neck is below head, don't move down
+            is_move_safe["down"] = False
+        elif neck["y"] > head["y"]:  #Neck is above head, don't move up
+            is_move_safe["up"] = False
 
     #Prevent snake from moving out of bounds
     if head["x"] == 0:
@@ -357,15 +374,25 @@ def move(game_state: typing.Dict) -> typing.Dict:
 
     #Prevent snake from colliding with other snake bodies
     for snake in game_state['board']['snakes']:
-        for segment in snake["body"][:-1]:  # Exclude tail
+        # Check all body segments including tail (snake might eat and tail won't move)
+        for i, segment in enumerate(snake["body"]):
+          # Can move to tail position only if it's the last segment and no food there
+          is_tail = (i == len(snake["body"]) - 1)
+          has_food_on_tail = is_tail and any(f["x"] == segment["x"] and f["y"] == segment["y"] for f in game_state['board']['food'])
+
           if (segment["x"] == head["x"] + 1) and (segment["y"] == head["y"]):
-              is_move_safe["right"] = False
+              # Unsafe if: not a tail, OR is a tail with food on it
+              if not is_tail or has_food_on_tail:
+                  is_move_safe["right"] = False
           if (segment["x"] == head["x"] - 1) and (segment["y"] == head["y"]):
-              is_move_safe["left"] = False
+              if not is_tail or has_food_on_tail:
+                  is_move_safe["left"] = False
           if (segment["x"] == head["x"]) and (segment["y"] == head["y"] + 1):
-              is_move_safe["up"] = False
+              if not is_tail or has_food_on_tail:
+                  is_move_safe["up"] = False
           if (segment["x"] == head["x"]) and (segment["y"] == head["y"] - 1):
-              is_move_safe["down"] = False
+              if not is_tail or has_food_on_tail:
+                  is_move_safe["down"] = False
 
     #Avoid hazards if they exist
     if 'hazards' in game_state['board']:
@@ -404,8 +431,8 @@ def move(game_state: typing.Dict) -> typing.Dict:
             possible_opponent_moves.append({"x": opponent_head["x"], "y": opponent_head["y"] - 1})
 
         for opp_move in possible_opponent_moves:
-            # Only avoid if opponent is STRICTLY longer (we win ties and longer matchups)
-            if opponent_length > my_length:
+            # Avoid head-to-head with equal or longer snakes (both die on equal length collision)
+            if opponent_length >= my_length:
                 if opp_move["x"] == head["x"] + 1 and opp_move["y"] == head["y"]:
                     is_move_safe["right"] = False
                 if opp_move["x"] == head["x"] - 1 and opp_move["y"] == head["y"]:
@@ -420,21 +447,19 @@ def move(game_state: typing.Dict) -> typing.Dict:
     for direction in ["up", "down", "left", "right"]:
         move_scores[direction] = calculate_move_score(game_state, direction, is_move_safe)
 
-    # Find the best move
-    best_move = max(move_scores, key=move_scores.get)
-    best_score = move_scores[best_move]
+    # Filter to only actually safe moves
+    safe_moves_with_scores = {direction: score for direction, score in move_scores.items()
+                              if is_move_safe[direction]}
 
-    # If best move is deadly, pick any safe move
-    if best_score < -100000:
-        safe_moves = [m for m, safe in is_move_safe.items() if safe]
-        if safe_moves:
-            best_move = random.choice(safe_moves)
-            print(f"MOVE {game_state['turn']}: Emergency move {best_move}")
-        else:
-            # No safe moves - try to survive
-            best_move = "up"
-            print(f"MOVE {game_state['turn']}: No safe moves! Attempting {best_move}")
-    else:
+    # Find the best move from safe moves
+    if safe_moves_with_scores:
+        best_move = max(safe_moves_with_scores, key=safe_moves_with_scores.get)
+        best_score = safe_moves_with_scores[best_move]
         print(f"MOVE {game_state['turn']}: {best_move} (score: {best_score:.1f})")
+    else:
+        # No safe moves - pick the least bad option
+        best_move = max(move_scores, key=move_scores.get)
+        best_score = move_scores[best_move]
+        print(f"MOVE {game_state['turn']}: No safe moves! Attempting {best_move} (score: {best_score:.1f})")
 
     return {"move": best_move}
