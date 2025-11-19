@@ -48,11 +48,19 @@ def run_server(handlers: typing.Dict):
         response.headers.set("server", "battlesnake/azure/app-service-python")
         return response
 
+    return app
+
+# Import game logic
 from main import info, start, move, end
 
-run_server({
+# Create the Flask app instance for Gunicorn
+app = run_server({
     "info": info,
     "start": start,
     "move": move,
     "end": end,
 })
+
+# For local development
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8000, debug=True)
